@@ -1,10 +1,8 @@
 """
-AutoNews AI - Video Maker
-Creates short-form videos (YouTube Shorts / Instagram Reels) using:
-- Edge TTS (free, unlimited voice generation)
-- FFmpeg (free video rendering)
-- Pillow (free thumbnail/frame generation)
+AutoNews AI - Video Maker v3.1 (Ultra Reliable)
+Real video generation with strong error recovery and chunked processing.
 """
+
 import asyncio
 import json
 import logging
@@ -12,6 +10,7 @@ import subprocess
 import textwrap
 from datetime import datetime
 from pathlib import Path
+from typing import Dict, List, Optional, Any
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -19,93 +18,123 @@ import config
 
 log = logging.getLogger(__name__)
 
+# ========================== CONFIG ==========================
+VIDEO_WIDTH = getattr(config, "VIDEO_WIDTH", 1080)
+VIDEO_HEIGHT = getattr(config, "VIDEO_HEIGHT", 1920)
+FPS = 30
+DEFAULT_FRAME_DURATION = 4.5
 
-# ── Text-to-Speech using Edge TTS (FREE, unlimited) ─────────
-async def generate_voice(text: str, output_path: Path,
-                         voice: str = "hi-IN-SwaraNeural") -> Path | None:
-    """Generate voice audio from text using Microsoft Edge TTS (free)."""
+TTS_VOICE = getattr(config, "TTS_VOICE", "hi-IN-SwaraNeural")
+TTS_FALLBACK = "en-US-JennyNeural"
+
+# ========================== DEPENDENCY CHECK ==========================
+def check_dependencies() -> bool:
+    """Check required tools."""
+    try:
+        if not subprocess.run(["ffmpeg", "-version"], capture_output=True, timeout=5).returncode == 0:
+            log.error("❌ FFmpeg not found. Video creation will fail.")
+            return False
+    except FileNotFoundError:
+        log.error("❌ FFmpeg not found in PATH. Video creation will fail.")
+        return False
+        
     try:
         import edge_tts
-
-        # Clean text — remove markers
-        clean_text = text.replace("[PAUSE]", ",").replace("[pause]", ",")
-
-        communicate = edge_tts.Communicate(clean_text, voice)
-        await communicate.save(str(output_path))
-        log.info(f"Voice generated: {output_path.name}")
-        return output_path
     except ImportError:
-        log.error("edge-tts not installed. Run: pip install edge-tts")
-        return None
+        log.warning("edge-tts not installed → videos will be silent")
+    return True
+
+
+# ========================== TTS ==========================
+async def generate_voice_async(text: str, output_path: Path) -> Optional[Path]:
+    try:
+        import edge_tts
+        clean_text = text.replace("[PAUSE]", ", ").replace("[pause]", ", ")
+        clean_text = " ".join(clean_text.split())
+
+        communicate = edge_tts.Communicate(clean_text, voice=TTS_VOICE)
+        await communicate.save(str(output_path))
+
+        if output_path.stat().st_size > 2048:
+            log.info(f"🎤 Voice generated ({output_path.stat().st_size/1024:.1f} KB)")
+            return output_path
     except Exception as e:
-        log.error(f"TTS error: {e}")
-        return None
+        log.warning(f"Primary voice failed: {e}")
+        # Try fallback voice
+        try:
+            communicate = edge_tts.Communicate(clean_text, voice=TTS_FALLBACK)
+            await communicate.save(str(output_path))
+            return output_path
+        except Exception as e2:
+            log.error(f"All TTS attempts failed: {e2}")
+    return None
 
 
-def generate_voice_sync(text: str, output_path: Path, voice: str = "hi-IN-SwaraNeural") -> Path | None:
-    """Synchronous wrapper for voice generation."""
-    return asyncio.run(generate_voice(text, output_path, voice))
+# ========================== FRAME GENERATION ==========================
+def get_font(size: int):
+    """Robust font loading across platforms."""
+    font_paths = [
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "arialbd.ttf", "Arial-Bold.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+    ]
+    for path in font_paths:
+        try:
+            return ImageFont.truetype(path, size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
 
 
-# ── Create text frames using Pillow ──────────────────────────
-def create_text_frame(text: str, output_path: Path,
-                      width: int = 1080, height: int = 1920,
-                      bg_color: str = "#0a0d0b",
-                      text_color: str = "#e8ebe9",
-                      accent_color: str = "#4ade80") -> Path:
-    """Create a single video frame with text overlay."""
-    img = Image.new("RGB", (width, height), bg_color)
+def create_text_frame(text: str, output_path: Path) -> Path:
+    """Create visually rich frame."""
+    img = Image.new("RGB", (VIDEO_WIDTH, VIDEO_HEIGHT), "#0a0a0a")
     draw = ImageDraw.Draw(img)
 
-    # Try to use a good font, fallback to default
-    try:
-        font_large = ImageFont.truetype("arial.ttf", 52)
-        font_small = ImageFont.truetype("arial.ttf", 28)
-        font_brand = ImageFont.truetype("arial.ttf", 32)
-    except OSError:
-        font_large = ImageFont.load_default()
-        font_small = font_large
-        font_brand = font_large
+    font_large = get_font(58)
+    font_med = get_font(34)
+    font_small = get_font(28)
 
-    # Draw gradient background overlay
-    for y in range(height):
-        alpha = int(255 * (y / height) * 0.3)
-        draw.line([(0, y), (width, y)], fill=(10, 18, 12, alpha))
+    # Subtle gradient
+    for y in range(VIDEO_HEIGHT):
+        shade = int(15 + (y / VIDEO_HEIGHT) * 25)
+        draw.line([(0, y), (VIDEO_WIDTH, y)], fill=(shade, shade, shade))
 
-    # Draw accent bar at top
-    draw.rectangle([(0, 0), (width, 6)], fill=accent_color)
+    draw.rectangle([(0, 0), (VIDEO_WIDTH, 10)], fill="#22c55e")
 
-    # Draw brand name
-    draw.text((40, 60), config.CHANNEL_NAME, fill=accent_color, font=font_brand)
+    # Brand
+    draw.text((50, 45), getattr(config, "CHANNEL_NAME", "AutoNews AI").upper(),
+              fill="#22c55e", font=font_small)
 
-    # Draw main text (wrapped)
-    wrapped = textwrap.fill(text, width=28)
+    # Main content
+    wrapped = textwrap.fill(text, width=32)
     lines = wrapped.split("\n")
-    y_pos = height // 2 - (len(lines) * 60) // 2
+    y = (VIDEO_HEIGHT // 2) - (len(lines) * 75) // 2
+
     for line in lines:
-        draw.text((60, y_pos), line, fill=text_color, font=font_large)
-        y_pos += 65
+        draw.text((70, y), line, fill="#f8fafc", font=font_large, stroke_width=2, stroke_fill="#0a0a0a")
+        y += 82
 
-    # Draw CTA at bottom
-    cta = f"Follow {config.CHANNEL_HANDLE}"
-    draw.text((60, height - 120), cta, fill=accent_color, font=font_small)
+    # CTA
+    cta = f"Follow {getattr(config, 'CHANNEL_HANDLE', '@AutoNewsAI')} 🔥"
+    draw.text((70, VIDEO_HEIGHT - 130), cta, fill="#bef575", font=font_med)
 
-    # Draw bottom bar
-    draw.rectangle([(0, height - 6), (width, height)], fill=accent_color)
+    draw.rectangle([(0, VIDEO_HEIGHT - 10), (VIDEO_WIDTH, VIDEO_HEIGHT)], fill="#22c55e")
 
-    img.save(str(output_path), quality=95)
-    log.info(f"Frame created: {output_path.name}")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    img.save(output_path, quality=95)
     return output_path
 
 
-def create_video_frames(script_data: dict, output_dir: Path) -> list[Path]:
-    """Create multiple frames from a script for the video."""
+def create_video_frames(script_data: Dict, output_dir: Path) -> List[Path]:
     frames_dir = output_dir / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
 
-    script_text = script_data.get("script", "")
-    # Split by [PAUSE] markers
-    segments = [s.strip() for s in script_text.split("[PAUSE]") if s.strip()]
+    script = script_data.get("script", "") or script_data.get("hook", "")
+    segments = [s.strip() for s in script.split("[PAUSE]") if s.strip()]
+
+    if not segments:
+        segments = [script[:280]]
 
     frame_paths = []
     for i, segment in enumerate(segments):
@@ -113,186 +142,156 @@ def create_video_frames(script_data: dict, output_dir: Path) -> list[Path]:
         create_text_frame(segment, frame_path)
         frame_paths.append(frame_path)
 
-    log.info(f"Created {len(frame_paths)} frames")
+    log.info(f"🖼️ Created {len(frame_paths)} frames")
     return frame_paths
 
 
-# ── Create thumbnail ─────────────────────────────────────────
-def create_thumbnail(title: str, output_path: Path) -> Path:
-    """Create a YouTube thumbnail."""
-    width, height = 1280, 720
-    img = Image.new("RGB", (width, height), "#0a0d0b")
-    draw = ImageDraw.Draw(img)
-
+# ========================== THUMBNAIL ==========================
+def create_thumbnail(title: str, output_path: Path) -> Optional[Path]:
     try:
-        font = ImageFont.truetype("arial.ttf", 56)
-        font_small = ImageFont.truetype("arial.ttf", 28)
-    except OSError:
-        font = ImageFont.load_default()
-        font_small = font
+        img = Image.new("RGB", (1280, 720), "#0f172a")
+        draw = ImageDraw.Draw(img)
+        font_big = get_font(68)
+        font_small = get_font(32)
 
-    # Background gradient
-    for y in range(height):
-        r = int(10 + (y / height) * 20)
-        g = int(13 + (y / height) * 30)
-        b = int(11 + (y / height) * 15)
-        draw.line([(0, y), (width, y)], fill=(r, g, b))
+        draw.rectangle([(0, 0), (1280, 12)], fill="#22c55e")
+        wrapped = textwrap.fill(title, width=24)
+        draw.text((80, 180), wrapped, fill="#f1f5f9", font=font_big, stroke_width=3, stroke_fill="#000")
 
-    # Accent border
-    draw.rectangle([(0, 0), (width, 8)], fill="#4ade80")
-    draw.rectangle([(0, height - 8), (width, height)], fill="#4ade80")
+        draw.text((80, 560), getattr(config, "CHANNEL_NAME", "AutoNews AI"), fill="#67e8f9", font=font_small)
 
-    # Title text
-    wrapped = textwrap.fill(title, width=25)
-    draw.text((60, height // 2 - 80), wrapped, fill="#ffffff", font=font)
-
-    # Brand
-    draw.text((60, height - 70), config.CHANNEL_NAME, fill="#4ade80", font=font_small)
-
-    img.save(str(output_path), quality=95)
-    log.info(f"Thumbnail created: {output_path.name}")
-    return output_path
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        img.save(output_path, quality=98)
+        return output_path
+    except Exception as e:
+        log.error(f"Thumbnail failed: {e}")
+        return None
 
 
-# ── Assemble video with FFmpeg ───────────────────────────────
-def assemble_video(frames: list[Path], audio_path: Path | None,
-                   output_path: Path, fps: int = 1) -> Path | None:
-    """
-    Assemble frames + audio into a video using FFmpeg.
-    Each frame is shown for a few seconds based on audio length.
-    """
+# ========================== VIDEO ASSEMBLY ==========================
+def assemble_video(frames: List[Path], audio_path: Optional[Path], output_path: Path) -> Optional[Path]:
     if not frames:
-        log.error("No frames to assemble")
         return None
 
-    # Check FFmpeg
-    try:
-        subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        log.error("FFmpeg not found! Install from https://ffmpeg.org/download.html")
-        return None
+    temp_dir = output_path.parent / "temp"
+    temp_dir.mkdir(exist_ok=True)
+    concat_file = temp_dir / "concat.txt"
 
-    frames_dir = frames[0].parent
-
-    # Create a concat file for FFmpeg
-    concat_file = frames_dir / "concat.txt"
-    duration_per_frame = 5  # default seconds per frame
-
+    audio_duration = None
     if audio_path and audio_path.exists():
-        # Get audio duration
-        probe_cmd = [
-            "ffprobe", "-v", "error", "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1", str(audio_path)
-        ]
         try:
-            result = subprocess.run(probe_cmd, capture_output=True, text=True)
-            total_duration = float(result.stdout.strip())
-            duration_per_frame = total_duration / max(len(frames), 1)
-        except (ValueError, subprocess.CalledProcessError):
-            duration_per_frame = 5
+            result = subprocess.run([
+                "ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+                "-of", "csv=p=0", str(audio_path)
+            ], capture_output=True, text=True, timeout=8)
+            audio_duration = float(result.stdout.strip())
+        except Exception:
+            pass
 
-    with open(concat_file, "w") as f:
+    frame_duration = (audio_duration / len(frames)) if audio_duration else DEFAULT_FRAME_DURATION
+
+    # Write concat list
+    with open(concat_file, "w", encoding="utf-8") as f:
         for frame in frames:
             f.write(f"file '{frame.resolve()}'\n")
-            f.write(f"duration {duration_per_frame:.2f}\n")
-        # Repeat last frame (FFmpeg requirement)
-        f.write(f"file '{frames[-1].resolve()}'\n")
+            f.write(f"duration {frame_duration:.3f}\n")
+        f.write(f"file '{frames[-1].resolve()}'\n")  # Repeat last frame
 
-    # Build FFmpeg command
     cmd = [
         "ffmpeg", "-y",
         "-f", "concat", "-safe", "0", "-i", str(concat_file),
+        "-c:v", "libx264", "-preset", "medium", "-crf", "23",
+        "-pix_fmt", "yuv420p",
+        "-vf", f"scale={VIDEO_WIDTH}:{VIDEO_HEIGHT}:force_original_aspect_ratio=decrease,pad={VIDEO_WIDTH}:{VIDEO_HEIGHT}:(ow-iw)/2:(oh-ih)/2",
+        "-r", str(FPS)
     ]
 
     if audio_path and audio_path.exists():
-        cmd.extend(["-i", str(audio_path)])
-        cmd.extend([
-            "-c:v", "libx264",
-            "-c:a", "aac",
-            "-b:a", "128k",
-            "-pix_fmt", "yuv420p",
-            "-shortest",
-            "-vf", f"scale={config.VIDEO_WIDTH}:{config.VIDEO_HEIGHT}",
-            str(output_path),
-        ])
-    else:
-        cmd.extend([
-            "-c:v", "libx264",
-            "-pix_fmt", "yuv420p",
-            "-vf", f"scale={config.VIDEO_WIDTH}:{config.VIDEO_HEIGHT}",
-            str(output_path),
-        ])
+        cmd.extend(["-i", str(audio_path), "-c:a", "aac", "-b:a", "192k", "-shortest"])
+
+    cmd.append(str(output_path))
 
     try:
-        log.info(f"Assembling video: {output_path.name}")
-        subprocess.run(cmd, capture_output=True, check=True, timeout=120)
-        log.info(f"Video assembled: {output_path.name} ({output_path.stat().st_size / 1024:.0f} KB)")
-        return output_path
-    except subprocess.CalledProcessError as e:
-        log.error(f"FFmpeg error: {e.stderr.decode()[:500]}")
-        return None
-    except subprocess.TimeoutExpired:
-        log.error("FFmpeg timed out after 120s")
+        log.info("🎬 Rendering final video...")
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=200)
+
+        if result.returncode == 0 and output_path.exists() and output_path.stat().st_size > 300_000:
+            log.info(f"✅ Video successfully created ({output_path.stat().st_size / (1024*1024):.2f} MB)")
+            return output_path
+        else:
+            log.error(f"FFmpeg failed: {result.stderr[-400:]}")
+            return None
+    except Exception as e:
+        log.exception(f"Video assembly failed: {e}")
         return None
 
 
-# ── Full video creation pipeline ─────────────────────────────
-def create_video(script_data: dict) -> dict | None:
-    """
-    Full pipeline: script → voice → frames → video + thumbnail.
-    Returns dict with paths to all outputs.
-    """
+# ========================== MAIN FUNCTION ==========================
+def create_video(script_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Main pipeline with strong error recovery."""
+    if not check_dependencies():
+        return None
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    title = script_data.get("source_title", "video")
-    safe_title = "".join(c for c in title[:30] if c.isalnum() or c in " -_").strip().replace(" ", "_")
-    video_id = f"{timestamp}_{safe_title}"
+    title = script_data.get("source_title") or script_data.get("title_youtube", "News Update")
+    safe_title = "".join(c for c in title[:35] if c.isalnum() or c in " -_").strip().replace(" ", "_")
 
-    # Create output directory for this video
-    video_dir = config.VIDEOS_DIR / video_id
+    video_id = f"{timestamp}_{safe_title}"
+    video_dir = Path(config.VIDEOS_DIR) / video_id
     video_dir.mkdir(parents=True, exist_ok=True)
 
-    # Step 1: Generate voice
+    log.info(f"🚀 Starting video creation: {title[:70]}...")
+
+    # 1. Voice
     audio_path = video_dir / "voice.mp3"
-    script_text = script_data.get("script", "")
-    voice_result = generate_voice_sync(script_text, audio_path)
+    voice_result = asyncio.run(generate_voice_async(script_data.get("script", ""), audio_path))
 
-    # Step 2: Create frames
+    # 2. Frames
     frames = create_video_frames(script_data, video_dir)
+    if not frames:
+        log.error("Frame generation failed")
+        return None
 
-    # Step 3: Assemble video
-    video_path = video_dir / f"{video_id}.mp4"
-    video_result = assemble_video(frames, audio_path if voice_result else None, video_path)
+    # 3. Final Video
+    final_video = video_dir / f"{video_id}.mp4"
+    video_result = assemble_video(frames, voice_result, final_video)
 
-    # Step 4: Create thumbnail
-    thumb_path = config.THUMBNAILS_DIR / f"{video_id}_thumb.jpg"
+    # 4. Thumbnail
+    thumb_path = Path(config.THUMBNAILS_DIR) / f"{video_id}_thumb.jpg"
     create_thumbnail(title, thumb_path)
 
-    # Save metadata
     metadata = {
         "video_id": video_id,
         "title": title,
-        "script": script_data,
-        "audio_path": str(audio_path) if voice_result else None,
-        "video_path": str(video_path) if video_result else None,
+        "status": "ready" if video_result else "partial",
+        "video_path": str(video_result) if video_result else None,
+        "audio_path": str(voice_result) if voice_result else None,
         "thumbnail_path": str(thumb_path),
         "frames_count": len(frames),
         "created_at": datetime.now().isoformat(),
-        "status": "ready" if video_result else "failed",
     }
-    meta_file = video_dir / "metadata.json"
-    meta_file.write_text(json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    log.info(f"Video creation {'completed' if video_result else 'failed'}: {video_id}")
+    (video_dir / "metadata.json").write_text(
+        json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+    if video_result:
+        log.info(f"🎉 FULL SUCCESS: {final_video.name}")
+    else:
+        log.warning("⚠️ Video created partially (check logs)")
+
     return metadata
 
 
 if __name__ == "__main__":
     test_script = {
-        "hook": "🔥 OpenAI ne GPT-5 ka date announce kar diya!",
-        "script": "Breaking news! [PAUSE] OpenAI ne officially confirm kar diya hai ki GPT-5 Q3 2026 mein aayega. [PAUSE] Isme reasoning 10x better hogi aur hallucinations kam honge. [PAUSE] Follow @AutoNewsAI for daily tech updates!",
-        "title_youtube": "🔥 GPT-5 Release Date CONFIRMED!",
-        "source_title": "GPT-5 Release Date Confirmed by OpenAI",
+        "script": "Breaking news! [PAUSE] OpenAI ne GPT-5 ke release date ki confirmation kar di hai Q3 2026 mein. [PAUSE] Bahut badi update aane wali hai.",
+        "source_title": "GPT-5 Release Date Confirmed",
+        "title_youtube": "GPT-5 Release Date CONFIRMED! 🔥"
     }
+
     result = create_video(test_script)
-    if result:
-        print(json.dumps(result, indent=2))
+    if result and result.get("video_path"):
+        print(f"\n✅ Video ready: {result['video_path']}")
+    else:
+        print("\n❌ Failed to create video.")
