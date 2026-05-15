@@ -108,6 +108,7 @@ const LogTerminal = memo(function LogTerminal({
     useState<ConnectionStatus>('connecting');
 
   const [paused, setPaused] = useState(false);
+  const pausedRef = useRef(false);
 
   const [filter, setFilter] = useState('');
 
@@ -176,7 +177,7 @@ const LogTerminal = memo(function LogTerminal({
     // MESSAGE
     eventSource.onmessage = (event) => {
 
-      if (paused) return;
+      if (pausedRef.current) return;
 
       try {
 
@@ -213,7 +214,13 @@ const LogTerminal = memo(function LogTerminal({
       }, 5000);
     };
 
-  }, [endpoint, paused, addLog]);
+  }, [endpoint, addLog]);
+
+
+  // Sync pausedRef so the SSE handler always reads current value
+  useEffect(() => {
+    pausedRef.current = paused;
+  }, [paused]);
 
 
   // ============================================================

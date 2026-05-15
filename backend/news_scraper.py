@@ -593,7 +593,7 @@ def save_to_db(articles: list[dict]) -> int:
             try:
                 conn.execute("""
                     INSERT OR IGNORE INTO news_topics
-                    (title, description, category, source_url, trend_score, viral_prob, status)
+                    (title, description, category, source_url, trend_score, viral_probability, status)
                     VALUES (?,?,?,?,?,?,?)
                 """, (
                     a["title"][:500],

@@ -342,6 +342,18 @@ def init_database():
         raise
 
 
+def get_connection():
+    """
+    Module-level get_connection for backward compatibility.
+    Returns a raw sqlite3 connection (caller must commit/close).
+    """
+    conn = sqlite3.connect(db.db_path, timeout=15)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON;")
+    conn.execute("PRAGMA journal_mode = WAL;")
+    return conn
+
+
 # ========================== CLI TEST ==========================
 if __name__ == "__main__":
     init_database()

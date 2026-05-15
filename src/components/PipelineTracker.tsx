@@ -15,6 +15,7 @@ export interface PipelineStep {
 
 export interface PipelineTrackerProps {
   currentTask: string;
+  runId?: string | null;
   steps?: PipelineStep[];
   errorStep?: string | null;
   className?: string;
@@ -34,13 +35,14 @@ function getActiveIndexFromTask(currentTask: string, steps: PipelineStep[]): num
   if (taskLower.includes('fact check')) return 1;
   if (taskLower.includes('script')) return 2;
   if (taskLower.includes('video') || taskLower.includes('rendering')) return 3;
-  if (taskLower.includes('upload') || taskLower.includes('publishing')) return 4;
+  if (taskLower.includes('upload') || taskLower.includes('publishing') || taskLower.includes('queue')) return 4;
   if (taskLower.includes('finished') || taskLower.includes('completed')) return steps.length - 1;
   return -1;
 }
 
 const PipelineTracker = memo(function PipelineTracker({
   currentTask,
+  runId,
   steps = DEFAULT_STEPS,
   errorStep = null,
   className = '',
@@ -68,7 +70,7 @@ const PipelineTracker = memo(function PipelineTracker({
             <p className="text-xs text-zinc-500 mt-1">{currentTask}</p>
           </div>
           <div className="text-[10px] font-mono text-zinc-600 bg-zinc-950 px-2 py-1 rounded border border-zinc-900">
-            ID: {Math.random().toString(36).substring(7).toUpperCase()}
+            {runId ? `ID: ${runId.slice(-8).toUpperCase()}` : 'ID: —'}
           </div>
         </div>
 

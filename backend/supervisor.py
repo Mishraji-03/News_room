@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional, Callable
 
 import config
-import config
 
 
 # Optional: use tenacity for robust retries
@@ -237,36 +236,43 @@ def start_pipeline_run(max_videos: int = 1, auto_upload: bool = False):
             supervisor_state.add_log("❌ Pipeline cancelled by user.")
             return
         supervisor_state.current_task = "Scraping News"
+        supervisor_state.add_log("📡 Step 1/5: Fetching trending news...")
         _broadcast()
         news_items = run_with_retry("scraper", get_trending_news, max_results=max_videos * 3)
         if not news_items:
             supervisor_state.add_log("❌ No trending news found. Pipeline aborted.")
             return
+        supervisor_state.add_log(f"✅ Found {len(news_items)} trending articles")
 
         # ========== STEP 2: Fact Checker ==========
         if supervisor_state.cancel_requested:
             return
         supervisor_state.current_task = "Fact Checking"
+        supervisor_state.add_log("🔍 Step 2/5: Verifying facts...")
         _broadcast()
         verified_news = run_with_retry("fact_checker", filter_news, news_list=news_items, min_score=50)
         if not verified_news:
             supervisor_state.add_log("❌ No news passed fact check. Pipeline aborted.")
             return
+        supervisor_state.add_log(f"✅ {len(verified_news)} articles passed verification")
 
         results = []
         for i, news_item in enumerate(verified_news[:max_videos]):
             if supervisor_state.cancel_requested:
                 break
 
-            supervisor_state.current_task = f"Processing Video {i+1}/{max_videos}"
             supervisor_state.add_log(f"📰 Processing: {news_item.get('title', '')[:60]}")
             _broadcast()
 
             # ========== STEP 3: Script Writer ==========
+            supervisor_state.current_task = "Script Writing"
+            supervisor_state.add_log("✍️ Step 3/5: Generating script...")
+            _broadcast()
             script_data = run_with_retry("script_writer", generate_script, news_item=news_item)
             if not script_data:
                 supervisor_state.add_log(f"⚠️ Script generation failed for item {i+1}. Skipping.")
                 continue
+            supervisor_state.add_log(f"✅ Script generated: {script_data.get('title_youtube', '')[:50]}")
 
             # SEO optimization (non-critical)
             try:
@@ -281,14 +287,19 @@ def start_pipeline_run(max_videos: int = 1, auto_upload: bool = False):
                 log.warning(f"SEO optimization failed: {e}")
 
             # ========== STEP 4: Video Maker ==========
+            supervisor_state.current_task = "Video Rendering"
+            supervisor_state.add_log("🎬 Step 4/5: Creating video...")
+            _broadcast()
             video_data = run_with_retry("video_maker", create_video, script_data=script_data)
             if not video_data or video_data.get("status") != "ready":
                 supervisor_state.add_log(f"⚠️ Video creation failed for item {i+1}. Skipping.")
                 continue
+            supervisor_state.add_log(f"✅ Video ready: {video_data.get('video_id', '')}")
 
             # ========== STEP 5: Uploader / Queue ==========
             if auto_upload:
                 supervisor_state.current_task = "Uploading Video"
+                supervisor_state.add_log("📤 Step 5/5: Uploading to YouTube...")
                 _broadcast()
                 yt_result = run_with_retry(
                     "uploader",
@@ -305,7 +316,9 @@ def start_pipeline_run(max_videos: int = 1, auto_upload: bool = False):
                         log.warning(f"Thumbnail set failed: {e}")
                 supervisor_state.update_agent("uploader", "done", "Uploaded to YouTube")
             else:
-                # Save to approval queue (non-retry, simple operation)
+                # Save to approval queue
+                supervisor_state.current_task = "Saving to Queue"
+                supervisor_state.add_log("📋 Step 5/5: Saving to approval queue...")
                 supervisor_state.update_agent("uploader", "active", "Saving to approval queue...")
                 queue_item = {
                     "id": supervisor_state.run_id + f"_{i+1}",
@@ -321,6 +334,7 @@ def start_pipeline_run(max_videos: int = 1, auto_upload: bool = False):
                     queue.append(queue_item)
                     queue_file.write_text(json.dumps(queue, indent=2, ensure_ascii=False), encoding="utf-8")
                     supervisor_state.update_agent("uploader", "done", "Saved to approval queue")
+                    supervisor_state.add_log(f"✅ Video saved to approval queue — go to Content Queue to review")
                 except Exception as e:
                     supervisor_state.update_agent("uploader", "error", f"Queue save failed: {e}")
                     continue

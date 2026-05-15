@@ -18,19 +18,12 @@ import {
 // ============================================================
 
 interface TopBarProps {
-  /** User name (default: "Admin") */
   userName?: string;
-  /** User avatar URL or initials (default: "A") */
   userAvatar?: string;
-  /** System status – "online", "degraded", or "offline" */
   systemStatus?: 'online' | 'degraded' | 'offline';
-  /** Last sync time (ISO string or display string) */
   lastSync?: string;
-  /** Callback for logout */
   onLogout?: () => void;
-  /** Callback for settings click */
   onSettings?: () => void;
-  /** Additional CSS classes */
   className?: string;
 }
 
@@ -83,7 +76,7 @@ export default function TopBar({
   return (
     <header
       className={`
-        fixed top-0 right-0 left-0 lg:left-64 z-30
+        fixed top-0 right-0 left-0 z-30
         bg-zinc-950/80 backdrop-blur-md
         border-b border-zinc-800
         px-4 py-2

@@ -28,12 +28,22 @@ export default function ContentQueue() {
 
   const filtered = filter === 'all' ? items : items.filter(i => (i.status === 'pending_approval' ? 'pending' : 'approved') === filter);
 
-  const handleApprove = (id: string) => {
-    setItems(prev => prev.map(i => i.id === id ? { ...i, status: 'approved_uploaded' as const } : i));
+  const handleApprove = async (id: string) => {
+    try {
+      await fetch(`http://localhost:8000/api/content/approve/${id}`, { method: 'POST' });
+      setItems(prev => prev.map(i => i.id === id ? { ...i, status: 'approved_uploaded' as const } : i));
+    } catch {
+      alert('Failed to approve. Is the backend running?');
+    }
   };
-  
-  const handleReject = (id: string) => {
-    setItems(prev => prev.filter(i => i.id !== id));
+
+  const handleReject = async (id: string) => {
+    try {
+      await fetch(`http://localhost:8000/api/content/queue/${id}`, { method: 'DELETE' });
+      setItems(prev => prev.filter(i => i.id !== id));
+    } catch {
+      alert('Failed to reject. Is the backend running?');
+    }
   };
 
   const getFilename = (path: string) => {

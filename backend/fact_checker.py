@@ -715,15 +715,14 @@ def _save_verified_to_db(item: dict, result: dict) -> Optional[int]:
 
         cursor.execute("""
             INSERT INTO verified_news
-            (topic_id, title, summary, sources, confidence_score, fake_probability, sources_count)
-            VALUES (?,?,?,?,?,?,?)
+            (topic_id, title, summary, confidence_score, fake_probability, sources_count)
+            VALUES (?,?,?,?,?,?)
         """, (
             topic_id,
             (item.get("title") or "")[:500],
             (item.get("description") or item.get("summary") or "")[:800],
-            sources_str,
             int(result["trust_score"]),
-            max(0, 100 - int(result["trust_score"])),   # fake_prob = inverse of trust
+            max(0, 100 - int(result["trust_score"])),
             checks.get("corroboration", {}).get("sources_found", 0),
         ))
         news_id = cursor.lastrowid

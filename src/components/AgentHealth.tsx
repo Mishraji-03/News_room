@@ -127,10 +127,14 @@ const AgentHealth = memo(function AgentHealth({
   compact = false,
   onAgentClick,
 }: AgentHealthProps) {
-  // Determine which agent keys to show
+  // Determine which agent keys to show — always show all 5 known agents
+  const DEFAULT_AGENT_KEYS = ['scraper', 'fact_checker', 'script_writer', 'video_maker', 'uploader'];
+
   const agentKeys = useMemo(() => {
     if (order && order.length) return order;
-    return Object.keys(agents).filter(key => labels[key] || defaultLabels[key]);
+    const fromAgents = Object.keys(agents).filter(key => labels[key] || defaultLabels[key]);
+    // If backend hasn't responded yet, show all default agents as idle
+    return fromAgents.length > 0 ? fromAgents : DEFAULT_AGENT_KEYS;
   }, [order, agents, labels]);
 
   if (agentKeys.length === 0) {
